@@ -1,5 +1,6 @@
 use httparse::Request;
 use std::fs::DirEntry;
+use std::fs::File;
 use std::io::prelude::*;
 use std::net::*;
 use std::path::Path;
@@ -17,7 +18,7 @@ pub enum HttpField {
     Path,
 }
 
-pub fn handle_connection(mut stream: &TcpStream, directory: String) -> Result<(), HttpError> {
+pub fn handle_connection(mut stream: &mut TcpStream, directory: String) -> Result<(), HttpError> {
     let mut buf = [0; 1024];
     stream.read(&mut buf).map_err(HttpError::FailedRead)?;
 
@@ -25,12 +26,16 @@ pub fn handle_connection(mut stream: &TcpStream, directory: String) -> Result<()
     let mut req = Request::new(&mut headers);
     let _status = req.parse(&buf).map_err(HttpError::FailedParse)?;
 
-    handle_request(&req, &stream, &directory)?;
+    handle_request(&req, &mut stream, &directory)?;
 
     Ok(())
 }
 
-fn handle_request(req: &Request, mut stream: &TcpStream, directory: &str) -> Result<(), HttpError> {
+fn handle_request(
+    req: &Request,
+    mut stream: &mut TcpStream,
+    directory: &str,
+) -> Result<(), HttpError> {
     let (version, method, path) = all_fields(&req)?;
     println!(
         "Request:\n{} {} {} from {:?}",
@@ -40,40 +45,68 @@ fn handle_request(req: &Request, mut stream: &TcpStream, directory: &str) -> Res
         stream.peer_addr()
     );
 
-    let response = match fetch_path(path, directory) {
-        Ok(res) => {
-            let mut v = format!(
-                "HTTP/1.1 200 Ok\n\
-                Content-Type: text/html; charset=utf-8\n\
-                {}\n\n",
-                if !res.is_dir {
-                    "Content-Disposition: attachment\n\n"
-                } else {
-                    ""
-                }
-            )
-            .into_bytes();
-            v.extend(res.data);
-            v
+    match fetch_path(path, directory) {
+        Ok(FetchResult::Dir(html)) => {
+            stream
+                .write(
+                    format!(
+                        "HTTP/1.1 200 Ok\n\
+                Content-Type: text/html; charset=utf-8\n\n{}",
+                        html
+                    )
+                    .as_bytes(),
+                )
+                .map_err(HttpError::FailedWrite)?;
         }
-        Err(FetchError::FileNotFound) => String::from(
-            "HTTP/1.1 404 Not Found\n\
+        Ok(FetchResult::File(mut file)) => {
+            send_file(&mut stream, &mut file).map_err(HttpError::FailedWrite)?;
+        }
+        Err(FetchError::FileNotFound) => {
+            stream
+                .write(
+                    String::from(
+                        "HTTP/1.1 404 Not Found\n\
         Content-Type: text/html; charset=utf-8\n\n\
         <h1> Error: File Not Found",
-        )
-        .into_bytes(),
-        Err(FetchError::IOError(_)) => String::from(
-            "HTTP/1.1 500 Server Error\n\
+                    )
+                    .as_bytes(),
+                )
+                .map_err(HttpError::FailedWrite)?;
+        }
+        Err(FetchError::IOError(_)) => {
+            stream
+                .write(
+                    String::from(
+                        "HTTP/1.1 500 Server Error\n\
             Content-Type: text/html; charset=utf-8\n\n\
             <h1> 500 Intenal Error",
-        )
-        .into_bytes(),
+                    )
+                    .as_bytes(),
+                )
+                .map_err(HttpError::FailedWrite)?;
+        }
     };
-
-    stream
-        .write(response.as_slice())
-        .map_err(HttpError::FailedWrite)?;
     Ok(())
+}
+
+fn send_file(stream: &mut TcpStream, file: &mut File) -> Result<(), std::io::Error> {
+    let _sent = stream.write(
+        String::from(
+            "HTTP/1.1 200 Ok\n\
+    Content-Disposition: attachment\n\n",
+        )
+        .as_bytes(),
+    )?;
+
+    let mut buf: [u8; 8192] = [0; 8192];
+    loop {
+        let amount = file.read(&mut buf)?;
+        if amount > 0 {
+            let _sent = stream.write(&buf)?;
+        } else {
+            break Ok(());
+        }
+    }
 }
 
 fn all_fields<'r>(req: &'r Request) -> Result<(u8, &'r str, &'r str), HttpError> {
@@ -87,17 +120,17 @@ fn all_fields<'r>(req: &'r Request) -> Result<(u8, &'r str, &'r str), HttpError>
     Ok((version, method, path))
 }
 
-pub enum FetchError {
+enum FetchError {
     FileNotFound,
     IOError(std::io::Error),
 }
 
-pub struct FetchResult {
-    pub is_dir: bool,
-    pub data: Vec<u8>,
+enum FetchResult {
+    Dir(String),
+    File(File),
 }
 
-pub fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchError> {
+fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchError> {
     let mut path_string = String::from(directory);
     path_string.push_str(path_str);
     let path = Path::new(&path_string);
@@ -131,19 +164,10 @@ pub fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchE
             page.push_str(format!("<li><a href={}>{}</a></li>", filename, filename).as_str());
         }
         page.push_str(end);
-        let mut data = Vec::new();
-        data.extend_from_slice(page.as_bytes());
-        Ok(FetchResult { data, is_dir: true })
+        Ok(FetchResult::Dir(page))
     } else {
-        match std::fs::read(path) {
-            Ok(file) => {
-                let mut data = Vec::new();
-                data.extend_from_slice(file.as_slice());
-                Ok(FetchResult {
-                    data,
-                    is_dir: false,
-                })
-            }
+        match File::open(path) {
+            Ok(file) => Ok(FetchResult::File(file)),
             Err(e) => match e.kind() {
                 std::io::ErrorKind::NotFound => Err(FetchError::FileNotFound),
                 _ => Err(FetchError::IOError(e)),

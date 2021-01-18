@@ -55,10 +55,10 @@ fn main() {
     let pool = ThreadPool::new(n_workers);
 
     for stream in listener.incoming() {
-        if let Ok(stream) = stream {
+        if let Ok(mut stream) = stream {
             let dir = String::from(directory);
             pool.execute(move || {
-                let _res = handle::handle_connection(&stream, dir);
+                let _res = handle::handle_connection(&mut stream, dir);
             });
         }
     }
