@@ -90,19 +90,13 @@ fn handle_request(
 }
 
 fn send_file(stream: &mut TcpStream, file: &mut File) -> Result<(), std::io::Error> {
-    let _sent = stream.write(
-        String::from(
-            "HTTP/1.1 200 Ok\n\
-    Content-Disposition: attachment\n\n",
-        )
-        .as_bytes(),
-    )?;
+    let _sent = stream.write(String::from("HTTP/1.1 200 Ok\n\n\n").as_bytes())?;
 
     let mut buf: [u8; 8192] = [0; 8192];
     loop {
         let amount = file.read(&mut buf)?;
         if amount > 0 {
-            let _sent = stream.write(&buf)?;
+            let _sent = stream.write(&buf[0..amount])?;
         } else {
             break Ok(());
         }
