@@ -1,4 +1,4 @@
-# fileserv-simple
+# fileserve-simple
 
 ## USAGE:
     fileserve-simple [OPTIONS] [PORT]
