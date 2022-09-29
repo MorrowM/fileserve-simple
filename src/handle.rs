@@ -1,6 +1,6 @@
 use httparse::Request;
-use std::fs::DirEntry;
-use std::fs::File;
+use mime_guess::Mime;
+use std::fs::{DirEntry, File};
 use std::io::prelude::*;
 use std::net::*;
 use std::path::Path;
@@ -58,8 +58,8 @@ fn handle_request(
                 )
                 .map_err(HttpError::FailedWrite)?;
         }
-        Ok(FetchResult::File(mut file)) => {
-            send_file(&mut stream, &mut file).map_err(HttpError::FailedWrite)?;
+        Ok(FetchResult::File(mut file, mime)) => {
+            send_file(&mut stream, &mut file, mime).map_err(HttpError::FailedWrite)?;
         }
         Err(FetchError::FileNotFound) => {
             stream
@@ -89,8 +89,9 @@ fn handle_request(
     Ok(())
 }
 
-fn send_file(stream: &mut TcpStream, file: &mut File) -> Result<(), std::io::Error> {
-    let _sent = stream.write(String::from("HTTP/1.1 200 Ok\n\n\n").as_bytes())?;
+fn send_file(stream: &mut TcpStream, file: &mut File, mime: Mime) -> Result<(), std::io::Error> {
+    let start = format!("HTTP/1.1 200 Ok\nContent-Type: {mime}\n\n");
+    let _sent = stream.write(start.as_bytes())?;
 
     let mut buf: [u8; 8192] = [0; 8192];
     loop {
@@ -121,7 +122,7 @@ enum FetchError {
 
 enum FetchResult {
     Dir(String),
-    File(File),
+    File(File, Mime),
 }
 
 fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchError> {
@@ -161,7 +162,10 @@ fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchError
         Ok(FetchResult::Dir(page))
     } else {
         match File::open(path) {
-            Ok(file) => Ok(FetchResult::File(file)),
+            Ok(file) => Ok(FetchResult::File(
+                file,
+                mime_guess::from_path(path).first_or_octet_stream(),
+            )),
             Err(e) => match e.kind() {
                 std::io::ErrorKind::NotFound => Err(FetchError::FileNotFound),
                 _ => Err(FetchError::IOError(e)),
