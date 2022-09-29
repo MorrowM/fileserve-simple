@@ -127,7 +127,11 @@ enum FetchResult {
 fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchError> {
     let mut path_string = String::from(directory);
     path_string.push_str(path_str);
-    let path = Path::new(&path_string);
+    let pt = Path::new(&path_string);
+    let path = match pt.canonicalize(){
+        Err(e) => return Err(FetchError::IOError(e)),
+        Ok(p) => p,
+    };
     if path.is_dir() {
         let title = format!("Directory listing for {}", path_str);
         let start = format!(
@@ -151,10 +155,17 @@ fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchError
             }
         };
         entries.sort_by(cmp);
+        let mut file_list = vec![String::from("..")];
         for entry in entries {
             let filename = entry.file_name();
             let filename =
-                filename.to_string_lossy() + if entry.path().is_dir() { "/" } else { "" };
+                String::from(filename.to_string_lossy() + if entry.path().is_dir() { "/" } else { "" });
+            file_list.push(filename);
+            
+        }
+
+        // gen html file list
+        for filename in file_list {
             page.push_str(format!("<li><a href={}>{}</a></li>", filename, filename).as_str());
         }
         page.push_str(end);
@@ -169,3 +180,4 @@ fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchError
         }
     }
 }
+
