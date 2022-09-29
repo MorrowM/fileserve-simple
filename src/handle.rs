@@ -128,7 +128,9 @@ enum FetchResult {
 fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchError> {
     let mut path_string = String::from(directory);
     path_string.push_str(path_str);
-    let path = Path::new(&path_string);
+    let path = Path::new(&path_string)
+        .canonicalize()
+        .map_err(FetchError::IOError)?;
     if path.is_dir() {
         let title = format!("Directory listing for {}", path_str);
         let start = format!(
@@ -152,11 +154,12 @@ fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchError
             }
         };
         entries.sort_by(cmp);
+        add_filename_to_page("..", &mut page);
         for entry in entries {
-            let filename = entry.file_name();
+            let filename_osstr = entry.file_name();
             let filename =
-                filename.to_string_lossy() + if entry.path().is_dir() { "/" } else { "" };
-            page.push_str(format!("<li><a href={}>{}</a></li>", filename, filename).as_str());
+                filename_osstr.to_string_lossy() + if entry.path().is_dir() { "/" } else { "" };
+            add_filename_to_page(&filename, &mut page);
         }
         page.push_str(end);
         Ok(FetchResult::Dir(page))
@@ -172,4 +175,8 @@ fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchError
             },
         }
     }
+}
+
+fn add_filename_to_page(filename: &str, page: &mut String) {
+    page.push_str(format!("<li><a href={}>{}</a></li>", filename, filename).as_str());
 }
