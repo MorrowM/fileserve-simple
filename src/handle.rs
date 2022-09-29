@@ -164,7 +164,7 @@ fn fetch_path(path_str: &str, directory: &str) -> Result<FetchResult, FetchError
         page.push_str(end);
         Ok(FetchResult::Dir(page))
     } else {
-        match File::open(path) {
+        match File::open(&path) {
             Ok(file) => Ok(FetchResult::File(
                 file,
                 mime_guess::from_path(path).first_or_octet_stream(),
